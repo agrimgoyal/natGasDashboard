@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Natural Gas Storage Analytics | v5.1</title>
+    <title>Natural Gas Storage Analytics | v5.2</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
@@ -22,6 +22,18 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(75, 85, 99, 0.4);
         }
+        
+        /* Loading Animation */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #3b82f6;
+            width: 24px;
+            height: 24px;
+            -webkit-animation: spin 1s linear infinite; /* Safari */
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 font-sans min-h-screen flex flex-col">
@@ -38,12 +50,16 @@
                 </div>
             </div>
             <div class="flex items-center gap-4">
-                <div id="upload-status" class="hidden text-sm font-medium text-green-400 flex items-center gap-2">
-                    <i class="fa-solid fa-check-circle"></i> Data Loaded
+                <div id="loading-indicator" class="hidden flex items-center gap-2 text-blue-400 text-sm">
+                    <div class="loader"></div> Loading...
                 </div>
+                <div id="data-source-badge" class="hidden px-3 py-1 rounded-full bg-gray-700 border border-gray-600 text-xs text-gray-300">
+                    <i class="fa-solid fa-database mr-1"></i> <span id="source-name">Default Data</span>
+                </div>
+
                 <label class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg border border-gray-600 transition flex items-center gap-2 text-sm shadow-sm group">
                     <i class="fa-solid fa-upload group-hover:text-blue-400 transition"></i>
-                    <span>Upload ngshistory.xls</span>
+                    <span>Upload New File</span>
                     <input type="file" id="file-input" class="hidden" accept=".xls,.xlsx">
                 </label>
             </div>
@@ -52,11 +68,11 @@
 
     <main class="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 space-y-6">
 
-        <div id="empty-state" class="flex flex-col items-center justify-center h-[60vh] text-center space-y-4">
+        <div id="empty-state" class="hidden flex flex-col items-center justify-center h-[60vh] text-center space-y-4">
             <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 shadow-xl max-w-md">
                 <i class="fa-solid fa-chart-line text-6xl text-gray-600 mb-6"></i>
-                <h2 class="text-2xl font-bold text-white mb-2">Ready to Analyze</h2>
-                <p class="text-gray-400 mb-6">Upload your EIA Excel file (<code class="bg-gray-900 px-2 py-1 rounded text-blue-400 text-sm">ngshistory.xls</code>) to generate the dashboard.</p>
+                <h2 class="text-2xl font-bold text-white mb-2">No Data Found</h2>
+                <p class="text-gray-400 mb-6">Could not load default data. Please upload your EIA Excel file (<code class="bg-gray-900 px-2 py-1 rounded text-blue-400 text-sm">ngshistory.xls</code>).</p>
                 <button onclick="document.getElementById('file-input').click()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-medium transition w-full shadow-lg shadow-blue-900/20">
                     Select File
                 </button>
@@ -122,7 +138,7 @@
                         </p>
                     </div>
                     <div class="bg-gray-800 px-4 py-2 rounded-lg border border-gray-700 text-center">
-                        <p class="text-xs text-gray-400 uppercase tracking-wider">5-Year Average Flow</p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wider">5-Year Avg Flow</p>
                         <p id="outlook-5yr-avg" class="text-xl font-bold text-white">--</p>
                     </div>
                 </div>
@@ -138,8 +154,7 @@
                                 <th class="px-4 py-3 rounded-r-lg text-center">Type</th>
                             </tr>
                         </thead>
-                        <tbody id="outlook-table-body">
-                            </tbody>
+                        <tbody id="outlook-table-body"></tbody>
                     </table>
                 </div>
             </div>
@@ -178,11 +193,14 @@
 
     <footer class="border-t border-gray-800 mt-12 py-6 bg-gray-900">
         <div class="max-w-7xl mx-auto px-6 text-center text-gray-500 text-sm">
-            <p>&copy; 2026 Natural Gas Storage Analyzer. Runs locally in your browser.</p>
+            <p>&copy; 2026 Natural Gas Storage Analyzer. Runs in-browser.</p>
         </div>
     </footer>
 
     <script>
+        // CONFIG
+        const DEFAULT_FILE_URL = './ngshistory.xls'; // Assumes file is in same repo folder
+        
         const REGION_CAPACITY = {
             'Total Lower 48': 4693, 'East': 863, 'Midwest': 1107, 'Mountain': 228,
             'Pacific': 397, 'South Central': 2098, 'Salt': 712, 'Non Salt': 1386
@@ -204,35 +222,64 @@
         let GLOBAL_DATA = null;
         let ACTIVE_REGION = 'Total Lower 48';
 
+        // --- INIT ---
+        document.addEventListener('DOMContentLoaded', init);
         document.getElementById('file-input').addEventListener('change', handleFileUpload);
+
+        async function init() {
+            // Show loading
+            document.getElementById('loading-indicator').classList.remove('hidden');
+            
+            try {
+                const response = await fetch(DEFAULT_FILE_URL);
+                if (!response.ok) throw new Error("Default file not found");
+                
+                const arrayBuffer = await response.arrayBuffer();
+                loadWorkbook(arrayBuffer, "Default Data");
+                
+            } catch (err) {
+                console.warn("Could not load default file:", err);
+                document.getElementById('empty-state').classList.remove('hidden');
+                document.getElementById('loading-indicator').classList.add('hidden');
+            }
+        }
 
         async function handleFileUpload(e) {
             const file = e.target.files[0];
             if (!file) return;
-            const btn = e.target.parentElement;
-            const originalText = btn.querySelector('span').innerText;
-            btn.querySelector('span').innerText = "Processing...";
+
+            document.getElementById('loading-indicator').classList.remove('hidden');
+            document.getElementById('source-name').innerText = "Processing...";
             
             const reader = new FileReader();
             reader.onload = function(e) {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, {type: 'array'});
-                    let targetSheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('hist')) || workbook.SheetNames[1] || workbook.SheetNames[0];
-                    const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[targetSheetName], {header: 1});
-
-                    processExcelData(jsonData);
-
-                    document.getElementById('empty-state').classList.add('hidden');
-                    document.getElementById('dashboard-content').classList.remove('hidden');
-                    document.getElementById('upload-status').classList.remove('hidden');
-                    btn.querySelector('span').innerText = originalText;
-                } catch (err) {
-                    alert("Error: " + err.message);
-                    console.error(err);
-                }
+                loadWorkbook(new Uint8Array(e.target.result), file.name);
             };
             reader.readAsArrayBuffer(file);
+        }
+
+        function loadWorkbook(data, sourceName) {
+            try {
+                const workbook = XLSX.read(data, {type: 'array'});
+                let targetSheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('hist')) || workbook.SheetNames[1] || workbook.SheetNames[0];
+                const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[targetSheetName], {header: 1});
+
+                processExcelData(jsonData);
+
+                // UI Updates
+                document.getElementById('empty-state').classList.add('hidden');
+                document.getElementById('dashboard-content').classList.remove('hidden');
+                document.getElementById('loading-indicator').classList.add('hidden');
+                
+                const badge = document.getElementById('data-source-badge');
+                badge.classList.remove('hidden');
+                document.getElementById('source-name').innerText = sourceName;
+                
+            } catch (err) {
+                alert("Error processing file: " + err.message);
+                console.error(err);
+                document.getElementById('loading-indicator').classList.add('hidden');
+            }
         }
 
         function processExcelData(rawRows) {
@@ -276,7 +323,7 @@
 
             processedData.sort((a,b) => a.date - b.date);
 
-            // Calculate Flows & Averages
+            // Flows & Avgs
             const groupedByWeek = {};
             processedData.forEach(d => {
                 if(!groupedByWeek[d.weekNum]) groupedByWeek[d.weekNum] = [];
@@ -363,8 +410,6 @@
             renderStorageChart(rKey);
             renderFlowChart(rKey);
             renderSeasonalityChart(rKey);
-
-            // Outlook
             renderOutlookPanel(rKey, currentData.date);
         }
 
@@ -375,7 +420,6 @@
             document.getElementById('outlook-week-num').innerText = nextWeekNum;
             document.getElementById('outlook-next-date').innerText = moment(nextDate).format('MMM DD, YYYY');
 
-            // Find historicals
             const historicals = GLOBAL_DATA.filter(d => d.weekNum === nextWeekNum).sort((a,b) => b.year - a.year).slice(0, 5);
             const tbody = document.getElementById('outlook-table-body');
             tbody.innerHTML = '';
@@ -391,7 +435,6 @@
 
                 const tr = document.createElement('tr');
                 tr.className = 'border-b border-gray-700 hover:bg-gray-800 transition';
-                
                 const flowColor = flow > 0 ? 'text-blue-400' : 'text-orange-400';
                 const flowType = flow > 0 ? 'Inj' : (flow < 0 ? 'Wdr' : 'Flat');
                 const badgeColor = flow > 0 ? 'bg-blue-900 text-blue-300' : (flow < 0 ? 'bg-orange-900 text-orange-300' : 'bg-gray-700');
