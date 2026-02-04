@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natural Gas Storage Analytics | v5.0</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        .glass-panel {
+            background: rgba(31, 41, 55, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(75, 85, 99, 0.4);
+        }
+        
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans min-h-screen flex flex-col">
+
+    <header class="bg-gray-800 border-b border-gray-700 p-4 sticky top-0 z-50 shadow-lg">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="bg-blue-600 p-2 rounded-lg">
+                    <i class="fa-solid fa-fire-flame-simple text-white text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-white">GasAnalytics <span class="text-blue-500">Pro</span></h1>
+                    <p class="text-xs text-gray-400">Natural Gas Storage Dashboard</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <div id="upload-status" class="hidden text-sm font-medium text-green-400 flex items-center gap-2">
+                    <i class="fa-solid fa-check-circle"></i> Data Loaded
+                </div>
+                <label class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg border border-gray-600 transition flex items-center gap-2 text-sm shadow-sm group">
+                    <i class="fa-solid fa-upload group-hover:text-blue-400 transition"></i>
+                    <span>Upload ngshistory.xls</span>
+                    <input type="file" id="file-input" class="hidden" accept=".xls,.xlsx">
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 space-y-6">
+
+        <div id="empty-state" class="flex flex-col items-center justify-center h-[60vh] text-center space-y-4">
+            <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 shadow-xl max-w-md">
+                <i class="fa-solid fa-chart-line text-6xl text-gray-600 mb-6"></i>
+                <h2 class="text-2xl font-bold text-white mb-2">Ready to Analyze</h2>
+                <p class="text-gray-400 mb-6">Upload your EIA Excel file (<code class="bg-gray-900 px-2 py-1 rounded text-blue-400 text-sm">ngshistory.xls</code>) to generate the dashboard.</p>
+                <button onclick="document.getElementById('file-input').click()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-medium transition w-full shadow-lg shadow-blue-900/20">
+                    Select File
+                </button>
+            </div>
+        </div>
+
+        <div id="dashboard-content" class="hidden space-y-6">
+            
+            <div class="flex overflow-x-auto pb-2 gap-2 scrollbar-hide" id="region-tabs">
+                </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="glass-panel p-5 rounded-xl relative overflow-hidden group">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                        <i class="fa-solid fa-cube text-6xl text-blue-500"></i>
+                    </div>
+                    <p class="text-sm text-gray-400 font-medium">Current Storage</p>
+                    <h3 class="text-3xl font-bold text-white mt-1" id="kpi-storage">--</h3>
+                    <div class="mt-2 text-xs flex items-center gap-2">
+                        <span id="kpi-storage-badge" class="px-2 py-0.5 rounded bg-gray-700 text-gray-300">--</span>
+                        <span class="text-gray-500">BCF</span>
+                    </div>
+                </div>
+
+                <div class="glass-panel p-5 rounded-xl relative overflow-hidden group">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                        <i class="fa-solid fa-arrow-right-arrow-left text-6xl text-purple-500"></i>
+                    </div>
+                    <p class="text-sm text-gray-400 font-medium">Weekly Net Flow</p>
+                    <h3 class="text-3xl font-bold text-white mt-1" id="kpi-flow">--</h3>
+                    <div class="mt-2 text-xs text-gray-400" id="kpi-flow-desc">Injection/Withdrawal</div>
+                </div>
+
+                <div class="glass-panel p-5 rounded-xl relative overflow-hidden group">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                        <i class="fa-solid fa-scale-balanced text-6xl text-orange-500"></i>
+                    </div>
+                    <p class="text-sm text-gray-400 font-medium">vs 5-Year Avg</p>
+                    <h3 class="text-3xl font-bold text-white mt-1" id="kpi-diff-avg">--</h3>
+                    <div class="mt-2 w-full bg-gray-700 rounded-full h-1.5">
+                        <div id="kpi-diff-bar" class="bg-orange-500 h-1.5 rounded-full" style="width: 50%"></div>
+                    </div>
+                </div>
+
+                <div class="glass-panel p-5 rounded-xl relative overflow-hidden group">
+                    <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                        <i class="fa-solid fa-battery-half text-6xl text-green-500"></i>
+                    </div>
+                    <p class="text-sm text-gray-400 font-medium">Capacity Utilization</p>
+                    <h3 class="text-3xl font-bold text-white mt-1" id="kpi-capacity">--%</h3>
+                    <div class="mt-2 text-xs text-gray-500">
+                        Based on <span id="kpi-cap-total">--</span> BCF Capacity
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="glass-panel p-5 rounded-xl lg:col-span-2 shadow-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-chart-area text-blue-500"></i> Storage Level Analysis
+                        </h3>
+                    </div>
+                    <div id="chart-storage" class="w-full h-[400px]"></div>
+                </div>
+
+                <div class="glass-panel p-5 rounded-xl shadow-lg">
+                    <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <i class="fa-solid fa-chart-bar text-purple-500"></i> Weekly Net Flows
+                    </h3>
+                    <div id="chart-flow" class="w-full h-[400px]"></div>
+                </div>
+            </div>
+
+            <div class="glass-panel p-5 rounded-xl shadow-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-timeline text-green-500"></i> Seasonality (10-Year Spaghetti Plot)
+                    </h3>
+                    <div class="text-xs text-gray-400 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                        Highlighting Current Year
+                    </div>
+                </div>
+                <div id="chart-seasonality" class="w-full h-[450px]"></div>
+            </div>
+            
+        </div>
+    </main>
+
+    <footer class="border-t border-gray-800 mt-12 py-6 bg-gray-900">
+        <div class="max-w-7xl mx-auto px-6 text-center text-gray-500 text-sm">
+            <p>&copy; 2026 Natural Gas Storage Analyzer. Runs locally in your browser.</p>
+        </div>
+    </footer>
+
+    <script>
+        // --- CONFIGURATION ---
+        const REGION_CAPACITY = {
+            'Total Lower 48': 4693,
+            'East': 863,
+            'Midwest': 1107,
+            'Mountain': 228,
+            'Pacific': 397,
+            'South Central': 2098,
+            'Salt': 712,
+            'Non Salt': 1386
+        };
+
+        const REGION_MAPPING = {
+            'Total Lower 48': ['total lower 48', 'lower 48'],
+            'Salt': ['salt', 'south central salt'],
+            'Non Salt': ['nonsalt', 'non-salt', 'south central nonsalt'],
+            'East': ['east'],
+            'Midwest': ['midwest'],
+            'Mountain': ['mountain'],
+            'Pacific': ['pacific'],
+            'South Central': ['south central']
+        };
+
+        const COLORS = {
+            bg: '#111827',
+            text: '#f3f4f6',
+            grid: '#374151',
+            blue: '#3b82f6',
+            orange: '#f97316',
+            green: '#22c55e',
+            red: '#ef4444',
+            purple: '#a855f7'
+        };
+
+        let GLOBAL_DATA = null;
+        let ACTIVE_REGION = 'Total Lower 48';
+
+        // --- FILE HANDLING ---
+        document.getElementById('file-input').addEventListener('change', handleFileUpload);
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // UI Feedback
+            const btn = e.target.parentElement;
+            const originalText = btn.querySelector('span').innerText;
+            btn.querySelector('span').innerText = "Processing...";
+            
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    
+                    // Assume data is in the second sheet or find the one with "Total Lower 48"
+                    let targetSheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('hist')) || workbook.SheetNames[1]; 
+                    if(!targetSheetName) targetSheetName = workbook.SheetNames[0];
+
+                    const worksheet = workbook.Sheets[targetSheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1}); // Array of arrays
+
+                    processExcelData(jsonData);
+
+                    // UI Reset
+                    document.getElementById('empty-state').classList.add('hidden');
+                    document.getElementById('dashboard-content').classList.remove('hidden');
+                    document.getElementById('upload-status').classList.remove('hidden');
+                    btn.querySelector('span').innerText = originalText;
+                    
+                } catch (err) {
+                    alert("Error parsing file: " + err.message);
+                    console.error(err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // --- DATA PROCESSING ---
+        function processExcelData(rawRows) {
+            // 1. Find Header Row
+            let headerIdx = -1;
+            for(let i=0; i<20; i++) {
+                const rowStr = rawRows[i].map(c => String(c).toLowerCase()).join(' ');
+                if(rowStr.includes('week ending') && rowStr.includes('total lower 48')) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            
+            if(headerIdx === -1) throw new Error("Could not find header row");
+
+            const headers = rawRows[headerIdx].map(h => String(h).trim());
+            const dataRows = rawRows.slice(headerIdx + 1);
+            
+            // 2. Map Columns to Regions
+            const colMap = {}; // { 'Total Lower 48': colIndex, ... }
+            
+            headers.forEach((h, idx) => {
+                const hLow = h.toLowerCase();
+                if(hLow.includes('week ending')) colMap['Date'] = idx;
+                
+                for(const [regionKey, keywords] of Object.entries(REGION_MAPPING)) {
+                    // Specific logic for South Central to avoid grabbing "Salt" columns
+                    if(regionKey === 'South Central' && hLow.includes('salt')) continue;
+                    
+                    if(keywords.some(k => hLow.includes(k) || hLow === k)) {
+                        if(!colMap[regionKey]) colMap[regionKey] = idx;
+                    }
+                }
+            });
+
+            // 3. Transform to Structured Data
+            const processedData = [];
+            
+            dataRows.forEach(row => {
+                const dateVal = row[colMap['Date']];
+                if(!dateVal) return;
+
+                // Handle Excel Dates (num) or String dates
+                let dateObj;
+                if(typeof dateVal === 'number') {
+                    dateObj = new Date(Math.round((dateVal - 25569)*86400*1000));
+                } else {
+                    dateObj = new Date(dateVal);
+                }
+
+                if(isNaN(dateObj.getTime())) return;
+
+                const entry = {
+                    date: dateObj,
+                    year: dateObj.getFullYear(),
+                    weekNum: getWeekNumber(dateObj),
+                    regions: {}
+                };
+
+                for(const [rKey, colIdx] of Object.entries(colMap)) {
+                    if(rKey === 'Date') continue;
+                    const val = parseFloat(row[colIdx]);
+                    entry.regions[rKey] = isNaN(val) ? null : val;
+                }
+                
+                processedData.push(entry);
+            });
+
+            // Sort by Date
+            processedData.sort((a,b) => a.date - b.date);
+
+            // 4. Calculate Derived Metrics (Flows, Averages)
+            // Create a lookup for fast access
+            // We need to loop again to calculate flows (diff)
+            
+            processedData.forEach((d, i) => {
+                for(const rKey of Object.keys(d.regions)) {
+                    const currentVal = d.regions[rKey];
+                    // Calculate Flow
+                    if(i > 0 && processedData[i-1].regions[rKey] != null && currentVal != null) {
+                        d[`${rKey}_flow`] = currentVal - processedData[i-1].regions[rKey];
+                    } else {
+                        d[`${rKey}_flow`] = null;
+                    }
+                }
+            });
+            
+            // 5-Year Average Calculation
+            // For every week, look back at previous 5 years (matching Week Number)
+            const groupedByWeek = {};
+            processedData.forEach(d => {
+                const key = d.weekNum;
+                if(!groupedByWeek[key]) groupedByWeek[key] = [];
+                groupedByWeek[key].push(d);
+            });
+
+            processedData.forEach(d => {
+                for(const rKey of Object.keys(d.regions)) {
+                    const pastVals = [];
+                    // Find matching weeks in previous 5 years
+                    const matches = groupedByWeek[d.weekNum] || [];
+                    matches.forEach(m => {
+                        if(m.year >= d.year - 5 && m.year < d.year) {
+                            if(m.regions[rKey] != null) pastVals.push(m.regions[rKey]);
+                        }
+                    });
+
+                    if(pastVals.length > 0) {
+                        const avg = pastVals.reduce((a,b) => a+b, 0) / pastVals.length;
+                        d[`${rKey}_5yr_avg`] = avg;
+                        d[`${rKey}_diff_avg`] = (d.regions[rKey] - avg);
+                    } else {
+                        d[`${rKey}_5yr_avg`] = null;
+                        d[`${rKey}_diff_avg`] = null;
+                    }
+                    
+                    // YoY
+                    const lastYearMatch = matches.find(m => m.year === d.year - 1);
+                    d[`${rKey}_yoy`] = (lastYearMatch && lastYearMatch.regions[rKey]) 
+                        ? (d.regions[rKey] - lastYearMatch.regions[rKey]) 
+                        : null;
+                }
+            });
+
+            GLOBAL_DATA = processedData;
+            
+            // Generate Tabs
+            generateTabs(Object.keys(REGION_MAPPING).filter(k => colMap[k] !== undefined));
+            
+            // Render Default
+            updateDashboard();
+        }
+
+        // --- VISUALIZATION LOGIC ---
+        function generateTabs(availableRegions) {
+            const container = document.getElementById('region-tabs');
+            container.innerHTML = '';
+            
+            availableRegions.forEach(r => {
+                const btn = document.createElement('button');
+                btn.className = `whitespace-nowrap px-4 py-2 rounded-lg font-medium transition text-sm ${r === ACTIVE_REGION ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'}`;
+                btn.innerText = r;
+                btn.onclick = () => {
+                    ACTIVE_REGION = r;
+                    updateDashboard();
+                    // Update tab styles
+                    Array.from(container.children).forEach(c => {
+                        c.className = c.innerText === r 
+                            ? 'whitespace-nowrap px-4 py-2 rounded-lg font-medium transition text-sm bg-blue-600 text-white shadow-lg shadow-blue-900/40'
+                            : 'whitespace-nowrap px-4 py-2 rounded-lg font-medium transition text-sm bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white';
+                    });
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        function updateDashboard() {
+            if(!GLOBAL_DATA) return;
+            
+            const rKey = ACTIVE_REGION;
+            const currentData = GLOBAL_DATA[GLOBAL_DATA.length - 1]; // Latest entry
+            
+            // 1. Update KPIs
+            const storage = currentData.regions[rKey];
+            const flow = currentData[`${rKey}_flow`];
+            const diffAvg = currentData[`${rKey}_diff_avg`];
+            const capacity = REGION_CAPACITY[rKey] || 0;
+
+            document.getElementById('kpi-storage').innerText = Math.round(storage).toLocaleString();
+            document.getElementById('kpi-storage-badge').innerText = moment(currentData.date).format('MMM DD, YYYY');
+            
+            // Flow
+            const flowEl = document.getElementById('kpi-flow');
+            const flowDesc = document.getElementById('kpi-flow-desc');
+            flowEl.innerText = (flow > 0 ? '+' : '') + Math.round(flow);
+            flowEl.className = `text-3xl font-bold mt-1 ${flow > 0 ? 'text-blue-400' : 'text-orange-400'}`;
+            flowDesc.innerText = flow > 0 ? 'Net Injection' : 'Net Withdrawal';
+
+            // Diff Avg
+            const diffEl = document.getElementById('kpi-diff-avg');
+            diffEl.innerText = (diffAvg > 0 ? '+' : '') + Math.round(diffAvg);
+            diffEl.className = `text-3xl font-bold mt-1 ${diffAvg > 0 ? 'text-green-400' : 'text-red-400'}`;
+            
+            // Capacity
+            if(capacity > 0) {
+                const pct = (storage / capacity) * 100;
+                document.getElementById('kpi-capacity').innerText = pct.toFixed(1) + '%';
+                document.getElementById('kpi-cap-total').innerText = capacity.toLocaleString();
+            } else {
+                document.getElementById('kpi-capacity').innerText = 'N/A';
+            }
+
+            // 2. Render Charts
+            renderStorageChart(rKey);
+            renderFlowChart(rKey);
+            renderSeasonalityChart(rKey);
+        }
+
+        function renderStorageChart(region) {
+            const dates = GLOBAL_DATA.map(d => d.date);
+            const storage = GLOBAL_DATA.map(d => d.regions[region]);
+            const avg5yr = GLOBAL_DATA.map(d => d[`${region}_5yr_avg`]);
+
+            // Filter to last 2 years for default view
+            const cutoff = new Date();
+            cutoff.setFullYear(cutoff.getFullYear() - 2);
+            
+            const traceCurrent = {
+                x: dates, y: storage,
+                name: 'Current Storage',
+                line: { color: COLORS.blue, width: 3 },
+                type: 'scatter',
+                fill: 'tozeroy',
+                fillcolor: 'rgba(59, 130, 246, 0.1)'
+            };
+
+            const traceAvg = {
+                x: dates, y: avg5yr,
+                name: '5-Year Average',
+                line: { color: COLORS.orange, width: 2, dash: 'dash' },
+                type: 'scatter'
+            };
+
+            const layout = {
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#9ca3af' },
+                xaxis: { 
+                    range: [cutoff, dates[dates.length-1]],
+                    gridcolor: COLORS.grid, showgrid: true 
+                },
+                yaxis: { gridcolor: COLORS.grid, title: 'BCF' },
+                margin: { t: 10, l: 40, r: 10, b: 40 },
+                legend: { orientation: 'h', y: 1.1 }
+            };
+
+            Plotly.newPlot('chart-storage', [traceCurrent, traceAvg], layout, {responsive: true, displayModeBar: false});
+        }
+
+        function renderFlowChart(region) {
+            // Last 52 weeks
+            const dataSlice = GLOBAL_DATA.slice(-52);
+            const dates = dataSlice.map(d => d.date);
+            const flows = dataSlice.map(d => d[`${region}_flow`]);
+            const colors = flows.map(v => v >= 0 ? COLORS.blue : COLORS.orange);
+
+            const trace = {
+                x: dates, y: flows,
+                type: 'bar',
+                marker: { color: colors },
+                name: 'Net Flow'
+            };
+
+            const layout = {
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#9ca3af' },
+                xaxis: { gridcolor: COLORS.grid },
+                yaxis: { gridcolor: COLORS.grid, title: 'BCF' },
+                margin: { t: 10, l: 40, r: 10, b: 40 }
+            };
+
+            Plotly.newPlot('chart-flow', [trace], layout, {responsive: true, displayModeBar: false});
+        }
+
+        function renderSeasonalityChart(region) {
+            const years = [...new Set(GLOBAL_DATA.map(d => d.year))].sort();
+            const last10 = years.slice(-10);
+            
+            const traces = [];
+            
+            last10.forEach((year, idx) => {
+                const yearData = GLOBAL_DATA.filter(d => d.year === year);
+                const isCurrent = (idx === last10.length - 1);
+                
+                traces.push({
+                    x: yearData.map(d => d.weekNum),
+                    y: yearData.map(d => d.regions[region]),
+                    name: year.toString(),
+                    mode: 'lines',
+                    line: {
+                        color: isCurrent ? COLORS.red : 'rgba(156, 163, 175, 0.4)', // Red for current, gray for others
+                        width: isCurrent ? 4 : 1
+                    },
+                    hoverinfo: 'y+name'
+                });
+            });
+
+            const layout = {
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#9ca3af' },
+                xaxis: { 
+                    title: 'Week Number',
+                    gridcolor: COLORS.grid 
+                },
+                yaxis: { gridcolor: COLORS.grid, title: 'BCF' },
+                margin: { t: 10, l: 40, r: 10, b: 40 },
+                showlegend: false
+            };
+
+            Plotly.newPlot('chart-seasonality', traces, layout, {responsive: true, displayModeBar: false});
+        }
+
+        // Helper: ISO Week Number
+        function getWeekNumber(d) {
+            d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+            var yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+            var weekNo = Math.ceil(( ( (d - yearStart) / 86400000) + 1)/7);
+            return weekNo;
+        }
+
+    </script>
+</body>
+</html>
