@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Natural Gas Storage Analytics | v5.2</title>
+    <title>Natural Gas Storage Analytics | v5.3</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
@@ -159,15 +159,37 @@
                 </div>
             </div>
 
+            <div class="flex flex-col sm:flex-row justify-between items-end sm:items-center gap-4 border-b border-gray-700 pb-4">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-chart-line text-blue-400"></i> Historical Trends
+                </h3>
+                
+                <div class="flex items-center gap-2 bg-gray-800 p-1 rounded-lg border border-gray-700">
+                    <span class="text-xs text-gray-500 px-2 uppercase font-bold">Time Range:</span>
+                    <select id="time-range-selector" class="bg-gray-700 text-white text-sm rounded px-3 py-1.5 border-none outline-none focus:ring-1 focus:ring-blue-500">
+                        <optgroup label="Ranges">
+                            <option value="range_0.5">Last 6 Months</option>
+                            <option value="range_1" selected>Last 1 Year</option>
+                            <option value="range_3">Last 3 Years</option>
+                            <option value="range_5">Last 5 Years</option>
+                            <option value="range_all">All History</option>
+                        </optgroup>
+                        <optgroup id="year-options" label="Specific Years">
+                            </optgroup>
+                    </select>
+                </div>
+            </div>
+
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="glass-panel p-5 rounded-xl lg:col-span-2 shadow-lg">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-lg font-bold text-white flex items-center gap-2">
-                            <i class="fa-solid fa-chart-area text-blue-500"></i> Storage Level Analysis
+                            <i class="fa-solid fa-chart-area text-blue-500"></i> Storage Level
                         </h3>
                     </div>
                     <div id="chart-storage" class="w-full h-[400px]"></div>
                 </div>
+                
                 <div class="glass-panel p-5 rounded-xl shadow-lg">
                     <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
                         <i class="fa-solid fa-chart-bar text-purple-500"></i> Weekly Net Flows
@@ -201,16 +223,10 @@
         // CONFIG
         const DEFAULT_FILE_URL = './ngshistory.xls'; // Assumes file is in same repo folder
         
-        // Updated with Nov-2024 Design Capacity (Bcf)
+        // Updated Capacity Nov 2024 (Design Capacity)
         const REGION_CAPACITY = {
-            'Total Lower 48': 4671, 
-            'East': 1043, 
-            'Midwest': 1221, 
-            'Mountain': 479,
-            'Pacific': 369, 
-            'South Central': 1558, 
-            'Salt': 471, 
-            'Non Salt': 1088
+            'Total Lower 48': 4671, 'East': 1043, 'Midwest': 1221, 'Mountain': 479,
+            'Pacific': 369, 'South Central': 1558, 'Salt': 471, 'Non Salt': 1088
         };
 
         const REGION_MAPPING = {
@@ -232,6 +248,9 @@
         // --- INIT ---
         document.addEventListener('DOMContentLoaded', init);
         document.getElementById('file-input').addEventListener('change', handleFileUpload);
+        document.getElementById('time-range-selector').addEventListener('change', () => {
+            updateChartsOnly(); // Only re-render charts, not KPIs
+        });
 
         async function init() {
             // Show loading
@@ -313,13 +332,18 @@
             });
 
             const processedData = [];
+            const yearsSet = new Set();
+
             rawRows.slice(headerIdx + 1).forEach(row => {
                 const dateVal = row[colMap['Date']];
                 if(!dateVal) return;
                 let dateObj = typeof dateVal === 'number' ? new Date(Math.round((dateVal - 25569)*86400*1000)) : new Date(dateVal);
                 if(isNaN(dateObj.getTime())) return;
 
-                const entry = { date: dateObj, year: dateObj.getFullYear(), weekNum: getWeekNumber(dateObj), regions: {} };
+                const year = dateObj.getFullYear();
+                yearsSet.add(year);
+
+                const entry = { date: dateObj, year: year, weekNum: getWeekNumber(dateObj), regions: {} };
                 for(const [rKey, colIdx] of Object.entries(colMap)) {
                     if(rKey === 'Date') continue;
                     const val = parseFloat(row[colIdx]);
@@ -329,6 +353,16 @@
             });
 
             processedData.sort((a,b) => a.date - b.date);
+
+            // Populate Year Dropdown
+            const yearSelect = document.getElementById('year-options');
+            yearSelect.innerHTML = '';
+            Array.from(yearsSet).sort((a,b) => b-a).forEach(y => {
+                const opt = document.createElement('option');
+                opt.value = `year_${y}`;
+                opt.innerText = y;
+                yearSelect.appendChild(opt);
+            });
 
             // Flows & Avgs
             const groupedByWeek = {};
@@ -413,11 +447,36 @@
                 document.getElementById('kpi-cap-total').innerText = capacity.toLocaleString();
             }
 
-            // Charts
-            renderStorageChart(rKey);
-            renderFlowChart(rKey);
-            renderSeasonalityChart(rKey);
             renderOutlookPanel(rKey, currentData.date);
+            renderSeasonalityChart(rKey);
+            updateChartsOnly(); // Render main charts with filter
+        }
+
+        function updateChartsOnly() {
+            if(!GLOBAL_DATA) return;
+            const rKey = ACTIVE_REGION;
+            const rangeVal = document.getElementById('time-range-selector').value;
+            
+            let filteredData = GLOBAL_DATA;
+            const lastDate = GLOBAL_DATA[GLOBAL_DATA.length-1].date;
+
+            if (rangeVal.startsWith('range_')) {
+                const rangeStr = rangeVal.split('_')[1];
+                if (rangeStr !== 'all') {
+                    const yearsBack = parseFloat(rangeStr);
+                    const cutoff = new Date(lastDate);
+                    // Approximation for months vs years
+                    if (yearsBack < 1) cutoff.setMonth(cutoff.getMonth() - (yearsBack * 12));
+                    else cutoff.setFullYear(cutoff.getFullYear() - yearsBack);
+                    filteredData = GLOBAL_DATA.filter(d => d.date >= cutoff);
+                }
+            } else if (rangeVal.startsWith('year_')) {
+                const targetYear = parseInt(rangeVal.split('_')[1]);
+                filteredData = GLOBAL_DATA.filter(d => d.year === targetYear);
+            }
+
+            renderStorageChart(rKey, filteredData);
+            renderFlowChart(rKey, filteredData);
         }
 
         function renderOutlookPanel(region, lastDate) {
@@ -462,27 +521,25 @@
             avgEl.className = `text-xl font-bold ${avgFlow > 0 ? 'text-blue-400' : 'text-orange-400'}`;
         }
 
-        function renderStorageChart(region) {
-            const dates = GLOBAL_DATA.map(d => d.date);
-            const storage = GLOBAL_DATA.map(d => d.regions[region]);
-            const avg5yr = GLOBAL_DATA.map(d => d[`${region}_5yr_avg`]);
-            const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 2);
+        function renderStorageChart(region, data) {
+            const dates = data.map(d => d.date);
+            const storage = data.map(d => d.regions[region]);
+            const avg5yr = data.map(d => d[`${region}_5yr_avg`]);
             
             Plotly.newPlot('chart-storage', [
                 { x: dates, y: storage, name: 'Current', line: { color: COLORS.blue, width: 3 }, type: 'scatter', fill: 'tozeroy', fillcolor: 'rgba(59, 130, 246, 0.1)' },
                 { x: dates, y: avg5yr, name: '5Y Avg', line: { color: COLORS.orange, width: 2, dash: 'dash' }, type: 'scatter' }
             ], {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: '#9ca3af' },
-                xaxis: { range: [cutoff, dates[dates.length-1]], gridcolor: COLORS.grid },
+                xaxis: { gridcolor: COLORS.grid },
                 yaxis: { gridcolor: COLORS.grid }, margin: { t: 10, l: 40, r: 10, b: 40 }, legend: { orientation: 'h', y: 1.1 }
             }, {responsive: true, displayModeBar: false});
         }
 
-        function renderFlowChart(region) {
-            const dataSlice = GLOBAL_DATA.slice(-52);
-            const flows = dataSlice.map(d => d[`${region}_flow`]);
+        function renderFlowChart(region, data) {
+            const flows = data.map(d => d[`${region}_flow`]);
             Plotly.newPlot('chart-flow', [{
-                x: dataSlice.map(d => d.date), y: flows, type: 'bar', marker: { color: flows.map(v => v >= 0 ? COLORS.blue : COLORS.orange) }
+                x: data.map(d => d.date), y: flows, type: 'bar', marker: { color: flows.map(v => v >= 0 ? COLORS.blue : COLORS.orange) }
             }], {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: '#9ca3af' },
                 xaxis: { gridcolor: COLORS.grid }, yaxis: { gridcolor: COLORS.grid }, margin: { t: 10, l: 40, r: 10, b: 40 }
